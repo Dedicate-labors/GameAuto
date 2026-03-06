@@ -47,7 +47,7 @@ class GameAutoApp:
     def __init__(self, root):
         self.root = root
         self.root.title("游戏自动化工具")
-        self.root.geometry("1110x700")
+        self.root.geometry("1000x700")
         self.root.resizable(True, True)
         
         style = ttk.Style()
@@ -60,8 +60,23 @@ class GameAutoApp:
         self.running = False
         self.log_level = "信息"  # 全局日志级别
         
+        # 创建菜单栏
+        self.create_menu()
+        
         self.create_main_ui()
         
+    def create_menu(self):
+        """创建菜单栏"""
+        menubar = tk.Menu(self.root)
+        
+        # 操作菜单
+        operation_menu = tk.Menu(menubar, tearoff=0)
+        operation_menu.add_command(label="导出配置", command=self.export_config)
+        operation_menu.add_command(label="导入配置", command=self.import_config)
+        menubar.add_cascade(label="导入/导出", menu=operation_menu)
+        
+        self.root.config(menu=menubar)
+    
     def create_main_ui(self):
         main_container = ttk.Frame(self.root)
         main_container.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
@@ -78,10 +93,6 @@ class GameAutoApp:
         ttk.Button(toolbar, text="添加程序运行", command=lambda: self.add_step("program")).pack(side=tk.LEFT, padx=2)
         ttk.Button(toolbar, text="添加图片点击", command=lambda: self.add_step("image_click")).pack(side=tk.LEFT, padx=2)
         ttk.Button(toolbar, text="添加点击+文本", command=lambda: self.add_step("image_click_text")).pack(side=tk.LEFT, padx=2)
-        ttk.Button(toolbar, text="删除步骤", command=self.delete_step).pack(side=tk.LEFT, padx=2)
-        ttk.Button(toolbar, text="单独执行", command=self.execute_single_step).pack(side=tk.LEFT, padx=2)
-        ttk.Button(toolbar, text="导出配置", command=self.export_config).pack(side=tk.LEFT, padx=2)
-        ttk.Button(toolbar, text="导入配置", command=self.import_config).pack(side=tk.LEFT, padx=2)
         
         self.steps_container = ttk.Frame(step_list_frame)
         self.steps_container.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
@@ -96,6 +107,11 @@ class GameAutoApp:
         
         self.step_config_frame = ttk.LabelFrame(right_frame, text="步骤配置")
         self.step_config_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        
+        # 步骤保存按钮
+        config_toolbar = ttk.Frame(self.step_config_frame)
+        config_toolbar.pack(fill=tk.X, padx=5, pady=5)
+        ttk.Button(config_toolbar, text="保存步骤配置", command=self.save_step_config).pack(side=tk.LEFT, padx=2)
         
         self.canvas = tk.Canvas(self.step_config_frame)
         self.scrollbar = ttk.Scrollbar(self.step_config_frame, orient="vertical", command=self.canvas.yview)
@@ -142,21 +158,18 @@ class GameAutoApp:
         ttk.Label(name_frame, text="名称：").pack(side=tk.LEFT, padx=5, pady=5)
         self.step_name_var = tk.StringVar()
         ttk.Entry(name_frame, textvariable=self.step_name_var).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5, pady=5)
-        ttk.Button(name_frame, text="保存", command=self.save_step_name).pack(side=tk.LEFT, padx=5, pady=5)
         
         delay_frame = ttk.LabelFrame(self.scrollable_frame, text="延迟执行")
         delay_frame.pack(fill=tk.X, padx=10, pady=5)
         ttk.Label(delay_frame, text="延迟执行 (ms)：").pack(side=tk.LEFT, padx=5, pady=5)
         self.delay_var = tk.StringVar(value="0")
         ttk.Entry(delay_frame, textvariable=self.delay_var).pack(side=tk.LEFT, padx=5, pady=5)
-        ttk.Button(delay_frame, text="保存", command=self.save_delay).pack(side=tk.LEFT, padx=5, pady=5)
         
         self.program_frame = ttk.LabelFrame(self.scrollable_frame, text="程序运行设置")
         ttk.Label(self.program_frame, text="程序路径：").pack(side=tk.LEFT, padx=5, pady=5)
         self.program_path_var = tk.StringVar()
         ttk.Entry(self.program_frame, textvariable=self.program_path_var).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5, pady=5)
         ttk.Button(self.program_frame, text="浏览", command=self.browse_program).pack(side=tk.LEFT, padx=5, pady=5)
-        ttk.Button(self.program_frame, text="保存", command=self.save_program_path).pack(side=tk.LEFT, padx=5, pady=5)
         
         self.image_frame = ttk.LabelFrame(self.scrollable_frame, text="图片识别设置")
         
@@ -166,13 +179,12 @@ class GameAutoApp:
         self.image_path_var = tk.StringVar()
         ttk.Entry(image_path_frame, textvariable=self.image_path_var).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
         ttk.Button(image_path_frame, text="浏览", command=self.browse_image).pack(side=tk.LEFT, padx=5)
-        ttk.Button(image_path_frame, text="保存", command=self.save_image_path).pack(side=tk.LEFT, padx=5)
         
         fuzzy_frame = ttk.Frame(self.image_frame)
         fuzzy_frame.pack(fill=tk.X, pady=2)
         ttk.Label(fuzzy_frame, text="模糊识别：").pack(side=tk.LEFT, padx=5)
         self.fuzzy_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(fuzzy_frame, variable=self.fuzzy_var, command=self.save_fuzzy).pack(side=tk.LEFT, padx=5)
+        ttk.Checkbutton(fuzzy_frame, variable=self.fuzzy_var).pack(side=tk.LEFT, padx=5)
         
         region_frame = ttk.Frame(self.image_frame)
         region_frame.pack(fill=tk.X, pady=2)
@@ -182,7 +194,6 @@ class GameAutoApp:
         self.region_combobox = ttk.Combobox(region_frame, textvariable=self.region_var, values=region_options, state="readonly", width=10)
         self.region_combobox.pack(side=tk.LEFT, padx=5)
         self.region_combobox.bind("<<ComboboxSelected>>", self.on_region_change)
-        ttk.Button(region_frame, text="保存", command=self.save_region).pack(side=tk.LEFT, padx=5)
         
         self.custom_region_frame = ttk.Frame(self.image_frame)
         ttk.Label(self.custom_region_frame, text="X：").pack(side=tk.LEFT, padx=2)
@@ -197,14 +208,11 @@ class GameAutoApp:
         ttk.Label(self.custom_region_frame, text="高：").pack(side=tk.LEFT, padx=2)
         self.region_height_var = tk.StringVar(value="1080")
         ttk.Entry(self.custom_region_frame, textvariable=self.region_height_var, width=8).pack(side=tk.LEFT, padx=2)
-        ttk.Button(self.custom_region_frame, text="保存", command=self.save_custom_region).pack(side=tk.LEFT, padx=5)
         
         self.text_frame = ttk.LabelFrame(self.scrollable_frame, text="文本输入设置")
         ttk.Label(self.text_frame, text="输入文本：").pack(side=tk.LEFT, padx=5, pady=5)
         self.text_var = tk.StringVar()
         ttk.Entry(self.text_frame, textvariable=self.text_var).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5, pady=5)
-        ttk.Button(self.text_frame, text="粘贴", command=self.paste_text).pack(side=tk.LEFT, padx=5, pady=5)
-        ttk.Button(self.text_frame, text="保存", command=self.save_text).pack(side=tk.LEFT, padx=5, pady=5)
         
         execution_frame = ttk.LabelFrame(self.scrollable_frame, text="执行设置")
         execution_frame.pack(fill=tk.X, padx=10, pady=5)
@@ -217,7 +225,6 @@ class GameAutoApp:
         self.execution_combobox = ttk.Combobox(exec_type_frame, textvariable=self.execution_var, values=execution_options, state="readonly", width=10)
         self.execution_combobox.pack(side=tk.LEFT, padx=5)
         self.execution_combobox.bind("<<ComboboxSelected>>", self.on_execution_change)
-        ttk.Button(exec_type_frame, text="保存", command=self.save_execution).pack(side=tk.LEFT, padx=5)
         
         self.multiple_execution_frame = ttk.Frame(execution_frame)
         ttk.Label(self.multiple_execution_frame, text="执行次数：").pack(side=tk.LEFT, padx=5)
@@ -226,7 +233,6 @@ class GameAutoApp:
         ttk.Label(self.multiple_execution_frame, text="间隔(ms)：").pack(side=tk.LEFT, padx=5)
         self.execution_interval_var = tk.StringVar(value="1000")
         ttk.Entry(self.multiple_execution_frame, textvariable=self.execution_interval_var, width=8).pack(side=tk.LEFT, padx=5)
-        ttk.Button(self.multiple_execution_frame, text="保存", command=self.save_multiple_execution).pack(side=tk.LEFT, padx=5)
         
         self.continuous_execution_frame = ttk.Frame(execution_frame)
         ttk.Label(self.continuous_execution_frame, text="持续时间：").pack(side=tk.LEFT, padx=5)
@@ -238,7 +244,6 @@ class GameAutoApp:
         ttk.Label(self.continuous_execution_frame, text="间隔(ms)：").pack(side=tk.LEFT, padx=5)
         self.continuous_interval_var = tk.StringVar(value="1000")
         ttk.Entry(self.continuous_execution_frame, textvariable=self.continuous_interval_var, width=8).pack(side=tk.LEFT, padx=5)
-        ttk.Button(self.continuous_execution_frame, text="保存", command=self.save_continuous_execution).pack(side=tk.LEFT, padx=5)
         
         self.advanced_frame = ttk.LabelFrame(self.scrollable_frame, text="高级设置")
         
@@ -247,7 +252,6 @@ class GameAutoApp:
         ttk.Label(accuracy_frame, text="识别精度：").pack(side=tk.LEFT, padx=5)
         self.accuracy_var = tk.StringVar(value="0.8")
         ttk.Entry(accuracy_frame, textvariable=self.accuracy_var, width=8).pack(side=tk.LEFT, padx=5)
-        ttk.Button(accuracy_frame, text="保存", command=self.save_accuracy).pack(side=tk.LEFT, padx=5)
         
         click_frame = ttk.Frame(self.advanced_frame)
         click_frame.pack(fill=tk.X, pady=2)
@@ -255,14 +259,12 @@ class GameAutoApp:
         self.click_type_var = tk.StringVar(value="左键单击")
         click_options = ["左键单击", "左键双击", "右键单击"]
         ttk.Combobox(click_frame, textvariable=self.click_type_var, values=click_options, state="readonly", width=10).pack(side=tk.LEFT, padx=5)
-        ttk.Button(click_frame, text="保存", command=self.save_click_type).pack(side=tk.LEFT, padx=5)
         
         speed_frame = ttk.Frame(self.advanced_frame)
         speed_frame.pack(fill=tk.X, pady=2)
         ttk.Label(speed_frame, text="鼠标速度：").pack(side=tk.LEFT, padx=5)
         self.mouse_speed_var = tk.StringVar(value="0.5")
         ttk.Entry(speed_frame, textvariable=self.mouse_speed_var, width=8).pack(side=tk.LEFT, padx=5)
-        ttk.Button(speed_frame, text="保存", command=self.save_mouse_speed).pack(side=tk.LEFT, padx=5)
         
         offset_frame = ttk.Frame(self.advanced_frame)
         offset_frame.pack(fill=tk.X, pady=2)
@@ -273,7 +275,6 @@ class GameAutoApp:
         ttk.Label(offset_frame, text="Y：").pack(side=tk.LEFT, padx=2)
         self.click_offset_y_var = tk.StringVar(value="0")
         ttk.Entry(offset_frame, textvariable=self.click_offset_y_var, width=6).pack(side=tk.LEFT, padx=2)
-        ttk.Button(offset_frame, text="保存", command=self.save_click_offset).pack(side=tk.LEFT, padx=5)
     
     def add_step(self, step_type):
         step_names = {
@@ -292,6 +293,21 @@ class GameAutoApp:
             self.current_step_index = None
             self.update_step_list()
             self.update_step_config_ui()
+    
+    def delete_step_by_index(self, index):
+        if 0 <= index < len(self.steps):
+            del self.steps[index]
+            if self.current_step_index == index:
+                self.current_step_index = None
+                self.update_step_config_ui()
+            elif self.current_step_index > index:
+                self.current_step_index -= 1
+            self.update_step_list()
+    
+    def execute_single_step_by_index(self, index):
+        if 0 <= index < len(self.steps):
+            self.current_step_index = index
+            self.execute_single_step()
     
     def move_step_up(self):
         if self.current_step_index is not None and self.current_step_index > 0:
@@ -332,6 +348,18 @@ class GameAutoApp:
             label = ttk.Label(step_frame, text=f"{i + 1}. {step.name}", cursor="hand2")
             label.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
             label.bind("<Button-1>", lambda e, idx=i: self.select_step(idx))
+            
+            # 操作按钮
+            button_frame = ttk.Frame(step_frame)
+            button_frame.pack(side=tk.RIGHT, padx=5)
+            
+            # 单独执行按钮
+            execute_btn = ttk.Button(button_frame, text="执行", width=5, command=lambda idx=i: self.execute_single_step_by_index(idx))
+            execute_btn.pack(side=tk.LEFT, padx=2)
+            
+            # 删除按钮
+            delete_btn = ttk.Button(button_frame, text="删除", width=5, command=lambda idx=i: self.delete_step_by_index(idx))
+            delete_btn.pack(side=tk.LEFT, padx=2)
     
     def select_step(self, index):
         self.current_step_index = index
@@ -514,6 +542,42 @@ class GameAutoApp:
     
     def save_log_level(self):
         self.log_level = self.log_level_var.get()
+    
+    def save_step_config(self):
+        """保存当前步骤的所有配置"""
+        if self.current_step_index is not None:
+            # 保存步骤名称
+            self.save_step_name()
+            # 保存延迟
+            self.save_delay()
+            # 保存程序路径
+            self.save_program_path()
+            # 保存图片路径
+            self.save_image_path()
+            # 保存模糊识别
+            self.save_fuzzy()
+            # 保存区域设置
+            self.save_region()
+            # 保存自定义区域
+            self.save_custom_region()
+            # 保存文本
+            self.save_text()
+            # 保存执行方式
+            self.save_execution()
+            # 保存多次执行设置
+            self.save_multiple_execution()
+            # 保存持续执行设置
+            self.save_continuous_execution()
+            # 保存识别精度
+            self.save_accuracy()
+            # 保存点击方式
+            self.save_click_type()
+            # 保存鼠标速度
+            self.save_mouse_speed()
+            # 保存点击偏移
+            self.save_click_offset()
+            
+            messagebox.showinfo("成功", "步骤配置已保存")
     
     def browse_program(self):
         file_path = filedialog.askopenfilename(filetypes=[("可执行文件", "*.exe"), ("所有文件", "*.*")])
@@ -873,7 +937,12 @@ class GameAutoApp:
         
         try:
             self.log(f"输入文本：{step.text}")
-            pyautogui.typewrite(step.text)
+            # 将文本复制到剪贴板
+            pyperclip.copy(step.text)
+            # 等待一小段时间
+            time.sleep(0.1)
+            # 使用快捷键粘贴文本
+            pyautogui.hotkey('ctrl', 'v')
             self.log("文本输入成功")
             return True
         except Exception as e:
