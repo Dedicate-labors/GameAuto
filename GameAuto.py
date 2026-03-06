@@ -1,6 +1,7 @@
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 import os
+from pynput.keyboard import Controller, Key 
 import time
 import subprocess
 import pyautogui
@@ -77,7 +78,7 @@ class TextInputStep(BaseStep):
 class KeyInputStep(BaseStep):
     def __init__(self, name="按键输入"):
         super().__init__("key_input", name)
-        self.keys = ""  # 按键序列
+        self.keys = ""  # 按键序列，支持"a"或"alt+z+c"格式
     
     def execute(self, app):
         if not self.keys:
@@ -85,10 +86,22 @@ class KeyInputStep(BaseStep):
             return False
         
         try:
-            app.log(f"输入按键：{self.keys}")
-            # 模拟按键输入
-            pyautogui.typewrite(self.keys)
-            app.log("按键输入成功")
+            # 去除首尾空格，统一转为小写（兼容大小写输入）
+            key_sequence = self.keys.strip().lower()
+            app.log(f"准备输入按键：{key_sequence}")
+            
+            # 区分组合按键和普通按键
+            if "+" in key_sequence:
+                # 拆分组合按键（如 "alt+z+c" 拆分为 ["alt", "z", "c"]）
+                hotkeys = key_sequence.split("+")
+                # 执行组合按键（按住所有键再依次释放）
+                pyautogui.hotkey(*hotkeys)
+                app.log(f"组合按键 {key_sequence} 输入成功")
+            else:
+                # 执行普通单个按键输入
+                pyautogui.press(key_sequence)
+                app.log(f"普通按键 {key_sequence} 输入成功")
+            
             return True
         except Exception as e:
             app.log(f"按键输入失败：{str(e)}", level="错误")
