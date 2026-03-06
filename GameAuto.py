@@ -1,14 +1,11 @@
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
-import os
-from pynput.keyboard import Controller, Key 
 import time
 import subprocess
 import pyautogui
 import cv2
 import numpy as np
 from threading import Thread
-import pygetwindow as gw
 import pyperclip
 import json
 from abc import ABC, abstractmethod
