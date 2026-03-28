@@ -9,6 +9,55 @@ from threading import Thread
 import pyperclip
 import json
 from abc import ABC, abstractmethod
+import ctypes
+from ctypes import wintypes
+
+user32 = ctypes.WinDLL('user32', use_last_error=True)
+
+# 必须用 SendInput 结构体（MuMu 只吃这个）
+class MOUSEINPUT(ctypes.Structure): _fields_ = []
+class KEYBDINPUT(ctypes.Structure):
+    _fields_ = [
+        ("wVk", ctypes.c_ushort),
+        ("wScan", ctypes.c_ushort),
+        ("dwFlags", ctypes.c_ulong),
+        ("time", ctypes.c_ulong),
+        ("dwExtraInfo", ctypes.POINTER(ctypes.c_ulong))
+    ]
+class HARDWAREINPUT(ctypes.Structure): _fields_ = []
+
+class INPUT(ctypes.Structure):
+    _fields_ = [("type", ctypes.c_ulong),
+                ("ki", KEYBDINPUT),
+                ("padding", ctypes.c_byte * 8)]
+
+INPUT_KEYBOARD = 1
+KEYEVENTF_SCANCODE = 0x0008
+KEYEVENTF_KEYUP = 0x0002
+
+# 扫描码（MuMu 实测有效）
+SCAN_CODES = {
+    'a': 0x1E, 'b':0x30, 'c':0x2E, 'd':0x20, 'e':0x12, 'f':0x21, 'g':0x22,
+    'h':0x23, 'i':0x17, 'j':0x24, 'k':0x25, 'l':0x26, 'm':0x32, 'n':0x31,
+    'o':0x18, 'p':0x19, 'q':0x10, 'r':0x13, 's':0x1F, 't':0x14, 'u':0x16,
+    'v':0x2F, 'w':0x11, 'x':0x2D, 'y':0x15, 'z':0x2C,
+    '0':0x0B, '1':0x02, '2':0x03, '3':0x04, '4':0x05, '5':0x06,
+    '6':0x07, '7':0x08, '8':0x09, '9':0x0A, '`': 0x29,
+    'enter':0x1C, 'space':0x39, 'esc':0x01, 'backspace':0x0E,
+    'shift':0x2A, 'ctrl':0x1D, 'alt':0x38,
+    'up':0x48, 'down':0x50, 'left':0x4B, 'right':0x4D
+}
+
+# 真正底层按下/释放
+def send_key_scan(scan, press):
+    extra = ctypes.c_ulong(0)
+    flags = KEYEVENTF_SCANCODE
+    if not press:
+        flags |= KEYEVENTF_KEYUP
+    ki = KEYBDINPUT(0, scan, flags, 0, ctypes.pointer(extra))
+    inp = INPUT(INPUT_KEYBOARD, ki)
+    user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(INPUT))
+
 
 class BaseStep(ABC):
     def __init__(self, step_type, name="新步骤"):
@@ -75,33 +124,47 @@ class TextInputStep(BaseStep):
 class KeyInputStep(BaseStep):
     def __init__(self, name="按键输入"):
         super().__init__("key_input", name)
-        self.keys = ""  # 按键序列，支持"a"或"alt+z+c"格式
-    
+        self.keys = ""
+
     def execute(self, app):
         if not self.keys:
             app.log("请输入按键", level="错误")
             return False
-        
+
         try:
-            # 去除首尾空格，统一转为小写（兼容大小写输入）
             key_sequence = self.keys.strip().lower()
-            app.log(f"准备输入按键：{key_sequence}")
-            
-            # 区分组合按键和普通按键
+            app.log(f"底层按键输入：{key_sequence}")
+
             if "+" in key_sequence:
-                # 拆分组合按键（如 "alt+z+c" 拆分为 ["alt", "z", "c"]）
-                hotkeys = key_sequence.split("+")
-                # 执行组合按键（按住所有键再依次释放）
-                pyautogui.hotkey(*hotkeys)
-                app.log(f"组合按键 {key_sequence} 输入成功")
+                keys = key_sequence.split("+")
+                # 按下
+                for k in keys:
+                    scan = SCAN_CODES.get(k)
+                    if scan:
+                        send_key_scan(scan, True)
+                        time.sleep(0.03)
+                time.sleep(0.05)
+                # 释放
+                for k in reversed(keys):
+                    scan = SCAN_CODES.get(k)
+                    if scan:
+                        send_key_scan(scan, False)
+                        time.sleep(0.03)
+                app.log(f"组合按键 {key_sequence} 完成")
             else:
-                # 执行普通单个按键输入
-                pyautogui.press(key_sequence)
-                app.log(f"普通按键 {key_sequence} 输入成功")
-            
+                scan = SCAN_CODES.get(key_sequence)
+                if not scan:
+                    app.log(f"不支持按键：{key_sequence}", level="错误")
+                    return False
+                send_key_scan(scan, True)
+                time.sleep(0.05)
+                send_key_scan(scan, False)
+                app.log(f"按键 {key_sequence} 完成")
+
             return True
+
         except Exception as e:
-            app.log(f"按键输入失败：{str(e)}", level="错误")
+            app.log(f"按键失败：{e}", level="错误")
             return False
 
 class ImageRecognitionStep(BaseStep):
@@ -138,9 +201,23 @@ class ImageRecognitionStep(BaseStep):
             
             screenshot = cv2.cvtColor(np.array(screenshot), cv2.COLOR_RGB2BGR)
             
-            method = cv2.TM_CCOEFF_NORMED if self.fuzzy else cv2.TM_CCORR_NORMED
-            result = cv2.matchTemplate(screenshot, target, method)
-            min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(result)
+            if self.fuzzy:
+                # 使用边缘检测进行模糊匹配
+                screenshot_gray = cv2.cvtColor(screenshot, cv2.COLOR_BGR2GRAY)
+                target_gray = cv2.cvtColor(target, cv2.COLOR_BGR2GRAY)
+                
+                # 边缘检测
+                screenshot_edges = cv2.Canny(screenshot_gray, 100, 200)
+                target_edges = cv2.Canny(target_gray, 100, 200)
+                
+                # 模板匹配
+                result = cv2.matchTemplate(screenshot_edges, target_edges, cv2.TM_CCOEFF_NORMED)
+                min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(result)
+            else:
+                # 常规模板匹配
+                method = cv2.TM_CCORR_NORMED
+                result = cv2.matchTemplate(screenshot, target, method)
+                min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(result)
             
             if max_val < self.accuracy:
                 app.log(f"未找到匹配图片，相似度：{max_val:.2f}", level="错误")
@@ -169,84 +246,6 @@ class ImageRecognitionStep(BaseStep):
             app.log(f"图片识别失败：{str(e)}", level="错误")
             return False
 
-# class ImageClickTextStep(BaseStep):
-#     def __init__(self, name="点击+文本"):
-#         super().__init__("image_click_text", name)
-#         self.image_path = ""  # 图片路径
-#         self.fuzzy = True  # 是否支持模糊识别
-#         self.region = "全屏"  # 识别区域
-#         self.region_x = 0  # 自定义区域X坐标
-#         self.region_y = 0  # 自定义区域Y坐标
-#         self.region_width = 1920  # 自定义区域宽度
-#         self.region_height = 1080  # 自定义区域高度
-#         self.text = ""  # 输入文本
-#         self.accuracy = 0.8  # 识别精度
-#         self.click_type = "左键单击"  # 点击方式
-#         self.mouse_speed = 0.5  # 鼠标速度
-#         self.click_offset_x = 0  # 点击偏移X
-#         self.click_offset_y = 0  # 点击偏移Y
-    
-#     def execute(self, app):
-#         # 先执行图像识别和点击
-#         if not self.image_path:
-#             app.log("请选择图片路径", level="错误")
-#             return False
-        
-#         try:
-#             target = cv2.imread(self.image_path)
-#             if target is None:
-#                 app.log("图片加载失败", level="错误")
-#                 return False
-            
-#             if self.region == "全屏":
-#                 screenshot = pyautogui.screenshot()
-#             else:
-#                 screenshot = pyautogui.screenshot(region=(self.region_x, self.region_y, self.region_width, self.region_height))
-            
-#             screenshot = cv2.cvtColor(np.array(screenshot), cv2.COLOR_RGB2BGR)
-            
-#             method = cv2.TM_CCOEFF_NORMED if self.fuzzy else cv2.TM_CCORR_NORMED
-#             result = cv2.matchTemplate(screenshot, target, method)
-#             min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(result)
-            
-#             if max_val < self.accuracy:
-#                 app.log(f"未找到匹配图片，相似度：{max_val:.2f}", level="错误")
-#                 return False
-            
-#             h, w = target.shape[:2]
-#             if self.region == "全屏":
-#                 center_x = max_loc[0] + w // 2 + self.click_offset_x
-#                 center_y = max_loc[1] + h // 2 + self.click_offset_y
-#             else:
-#                 center_x = self.region_x + max_loc[0] + w // 2 + self.click_offset_x
-#                 center_y = self.region_y + max_loc[1] + h // 2 + self.click_offset_y
-            
-#             pyautogui.moveTo(center_x, center_y, duration=self.mouse_speed)
-            
-#             if self.click_type == "左键单击":
-#                 pyautogui.click()
-#             elif self.click_type == "左键双击":
-#                 pyautogui.doubleClick()
-#             elif self.click_type == "右键单击":
-#                 pyautogui.rightClick()
-            
-#             app.log(f"成功点击位置：({center_x}, {center_y})，相似度：{max_val:.2f}")
-            
-#             # 然后执行文本输入
-#             if self.text:
-#                 app.log(f"输入文本：{self.text}")
-#                 # 将文本复制到剪贴板
-#                 pyperclip.copy(self.text)
-#                 # 等待一小段时间
-#                 time.sleep(0.1)
-#                 # 使用快捷键粘贴文本
-#                 pyautogui.hotkey('ctrl', 'v')
-#                 app.log("文本输入成功")
-            
-#             return True
-#         except Exception as e:
-#             app.log(f"执行失败：{str(e)}", level="错误")
-#             return False
 
 class GameAutoApp:
     def __init__(self, root):
@@ -260,10 +259,17 @@ class GameAutoApp:
         style.configure("TFrame", padding=10)
         style.configure("TLabelFrame", padding=10)
         
+        # 添加选中步骤的样式
+        style.configure("Selected.TLabel", foreground="#0066cc", font=("Arial", 10, "bold"))
+        style.configure("TLabel", foreground="#333333")
+        
         self.steps = []
         self.current_step_index = None
         self.running = False
         self.log_level = "信息"  # 全局日志级别
+        
+        # 存储步骤项的引用，用于高效更新
+        self.step_items = []
         
         # 创建菜单栏
         self.create_menu()
@@ -301,13 +307,24 @@ class GameAutoApp:
         ttk.Button(toolbar, text="添加图像识别", command=lambda: self.add_step(ImageRecognitionStep())).pack(side=tk.LEFT, padx=2)
         # ttk.Button(toolbar, text="添加点击+文本", command=lambda: self.add_step(ImageClickTextStep())).pack(side=tk.LEFT, padx=2)
         
-        self.steps_container = ttk.Frame(step_list_frame)
-        self.steps_container.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        # 添加滚动功能
+        self.steps_canvas = tk.Canvas(step_list_frame)
+        self.steps_scrollbar = ttk.Scrollbar(step_list_frame, orient="vertical", command=self.steps_canvas.yview)
+        self.steps_container = ttk.Frame(self.steps_canvas)
         
-        sort_frame = ttk.Frame(step_list_frame)
-        sort_frame.pack(fill=tk.X, padx=5, pady=5)
-        ttk.Button(sort_frame, text="上移", command=self.move_step_up).pack(side=tk.LEFT, padx=2)
-        ttk.Button(sort_frame, text="下移", command=self.move_step_down).pack(side=tk.LEFT, padx=2)
+        self.steps_container.bind(
+            "<Configure>",
+            lambda e: self.steps_canvas.configure(scrollregion=self.steps_canvas.bbox("all"))
+        )
+        
+        # 添加鼠标滚轮支持
+        self.steps_canvas.bind("<MouseWheel>", lambda e: self.steps_canvas.yview_scroll(int(-e.delta/120), "units"))
+        
+        self.steps_canvas.create_window((0, 0), window=self.steps_container, anchor="nw")
+        self.steps_canvas.configure(yscrollcommand=self.steps_scrollbar.set)
+        
+        self.steps_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=5, pady=5)
+        self.steps_scrollbar.pack(side=tk.RIGHT, fill=tk.Y, padx=(0, 5), pady=5)
         
         right_frame = ttk.Frame(main_container)
         right_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=(5, 0))
@@ -353,6 +370,10 @@ class GameAutoApp:
         self.start_button.pack(side=tk.LEFT, padx=10)
         self.stop_button = ttk.Button(control_frame, text="停止执行", command=self.stop_execution, state=tk.DISABLED)
         self.stop_button.pack(side=tk.LEFT, padx=10)
+        
+        # 添加上移下移按钮
+        ttk.Button(control_frame, text="上移", command=self.move_step_up).pack(side=tk.LEFT, padx=10)
+        ttk.Button(control_frame, text="下移", command=self.move_step_down).pack(side=tk.LEFT, padx=10)
         
         self.status_var = tk.StringVar(value="就绪")
         ttk.Label(control_frame, textvariable=self.status_var, font=("Arial", 10, "bold")).pack(side=tk.RIGHT, padx=10)
@@ -511,6 +532,9 @@ class GameAutoApp:
         for widget in self.steps_container.winfo_children():
             widget.destroy()
         
+        # 清空步骤项引用
+        self.step_items = []
+        
         # 重新创建步骤项
         for i, step in enumerate(self.steps):
             step_frame = ttk.Frame(self.steps_container)
@@ -520,7 +544,10 @@ class GameAutoApp:
             var = tk.BooleanVar(value=step.enabled)
             def on_toggle(*args, idx=i, v=var):
                 self.steps[idx].enabled = v.get()
-                self.update_step_list()
+                # 只更新当前步骤的状态，不重建整个列表
+                if idx < len(self.step_items):
+                    # 这里可以添加更细粒度的更新，目前保持简单
+                    pass
             var.trace_add("write", on_toggle)
             checkbutton = ttk.Checkbutton(step_frame, variable=var)
             checkbutton.pack(side=tk.LEFT, padx=5)
@@ -541,9 +568,38 @@ class GameAutoApp:
             # 删除按钮
             delete_btn = ttk.Button(button_frame, text="删除", width=5, command=lambda idx=i: self.delete_step_by_index(idx))
             delete_btn.pack(side=tk.LEFT, padx=2)
+            
+            # 选中指示灯
+            indicator = ttk.Label(step_frame, width=2)
+            if i == self.current_step_index:
+                indicator.config(background="#4CAF50", relief="solid", borderwidth=1)
+            else:
+                indicator.config(background="#E0E0E0", relief="solid", borderwidth=1)
+            indicator.pack(side=tk.RIGHT, padx=5)
+            
+            # 存储步骤项引用
+            self.step_items.append((step_frame, indicator, label, checkbutton))
     
     def select_step(self, index):
+        # 保存之前的选中索引
+        prev_index = self.current_step_index
         self.current_step_index = index
+        
+        # 只更新指示灯状态，不重建整个列表
+        if self.step_items:
+            # 更新之前选中的步骤指示灯
+            if prev_index is not None and prev_index < len(self.step_items):
+                _, indicator, _, _ = self.step_items[prev_index]
+                indicator.config(background="#E0E0E0")
+            
+            # 更新当前选中的步骤指示灯
+            if index < len(self.step_items):
+                _, indicator, _, _ = self.step_items[index]
+                indicator.config(background="#4CAF50")
+        else:
+            # 如果步骤项引用为空，重建整个列表
+            self.update_step_list()
+        
         self.load_step_to_ui()
     
     def load_step_to_ui(self):
