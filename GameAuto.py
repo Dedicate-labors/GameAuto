@@ -72,6 +72,7 @@ class BaseStep(ABC):
         self.duration_unit = "分钟"  # 持续时间单位
         self.continuous_interval = 1000  # 持续执行间隔(ms)
         self.stop_on_success = True  # 成功执行一次后停止
+        self.stop_on_error = False  # 错误时停止执行
     
     @abstractmethod
     def execute(self, app):
@@ -384,9 +385,20 @@ class GameAutoApp:
         # 步骤基本设置
         name_frame = ttk.LabelFrame(self.scrollable_frame, text="步骤基本设置")
         name_frame.pack(fill=tk.X, padx=10, pady=5)
-        ttk.Label(name_frame, text="名称：").pack(side=tk.LEFT, padx=5, pady=5)
+        
+        # 名称设置
+        name_row = ttk.Frame(name_frame)
+        name_row.pack(fill=tk.X, pady=5)
+        ttk.Label(name_row, text="名称：").pack(side=tk.LEFT, padx=5)
         self.step_name_var = tk.StringVar()
-        ttk.Entry(name_frame, textvariable=self.step_name_var).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5, pady=5)
+        ttk.Entry(name_row, textvariable=self.step_name_var).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
+        
+        # 错误时停止执行设置
+        error_stop_row = ttk.Frame(name_frame)
+        error_stop_row.pack(fill=tk.X, pady=5)
+        ttk.Label(error_stop_row, text="错误时停止执行：").pack(side=tk.LEFT, padx=5)
+        self.stop_on_error_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(error_stop_row, variable=self.stop_on_error_var).pack(side=tk.LEFT, padx=5)
         
         delay_frame = ttk.LabelFrame(self.scrollable_frame, text="延迟执行")
         delay_frame.pack(fill=tk.X, padx=10, pady=5)
@@ -620,6 +632,7 @@ class GameAutoApp:
         self.continuous_interval_var.set(str(step.continuous_interval))
         self.stop_on_success_var.set(step.stop_on_success)
         self.stop_on_success_continuous_var.set(step.stop_on_success)
+        self.stop_on_error_var.set(step.stop_on_error)
         
         # 加载程序运行设置
         if hasattr(step, 'program_path'):
@@ -751,6 +764,7 @@ class GameAutoApp:
                 pass
             step.duration_unit = self.duration_unit_var.get()
             step.stop_on_success = self.stop_on_success_var.get()
+            step.stop_on_error = self.stop_on_error_var.get()
             
             # 保存程序运行设置
             if hasattr(step, 'program_path'):
@@ -936,13 +950,18 @@ class GameAutoApp:
                     self.log(f"步骤 {i + 1}: 延迟 {step.delay} ms 执行")
                     time.sleep(step.delay / 1000)
                 
+                # 记录执行结果
+                has_success = False
+                
                 # 处理执行方式
                 if step.execution == "单次执行":
-                    step.execute(self)
+                    has_success = step.execute(self)
                 elif step.execution == "多次执行":
                     count = 0
                     while count < step.execution_count and self.running:
                         success = step.execute(self)
+                        if success:
+                            has_success = True
                         
                         # 如果成功且设置了成功后停止，则退出循环
                         if success and step.stop_on_success:
@@ -959,6 +978,8 @@ class GameAutoApp:
                     
                     while time.time() - start_time < duration_seconds and self.running:
                         success = step.execute(self)
+                        if success:
+                            has_success = True
                         
                         # 如果成功且设置了成功后停止，则退出循环
                         if success and step.stop_on_success:
@@ -966,6 +987,13 @@ class GameAutoApp:
                         
                         # 添加间隔
                         time.sleep(step.continuous_interval / 1000)
+                
+                # 检查是否需要在错误时停止执行
+                if step.stop_on_error and not has_success:
+                    self.log(f"步骤 {i + 1}: {step.name} 执行失败，且设置了错误时停止执行，停止整个执行流程", level="错误")
+                    self.status_var.set(f"执行失败：步骤 {i + 1} {step.name} 执行失败")
+                    self.running = False
+                    break
             
             if self.running:
                 self.status_var.set("所有步骤执行完成")
@@ -1018,7 +1046,8 @@ class GameAutoApp:
                         "duration": step.duration,
                         "duration_unit": step.duration_unit,
                         "continuous_interval": step.continuous_interval,
-                        "stop_on_success": step.stop_on_success
+                        "stop_on_success": step.stop_on_success,
+                        "stop_on_error": step.stop_on_error
                     }
                     
                     # 添加步骤特定的属性
@@ -1094,6 +1123,7 @@ class GameAutoApp:
                     step.duration_unit = step_dict.get("duration_unit", "分钟")
                     step.continuous_interval = step_dict.get("continuous_interval", 1000)
                     step.stop_on_success = step_dict.get("stop_on_success", True)
+                    step.stop_on_error = step_dict.get("stop_on_error", False)
                     
                     # 设置步骤特定的属性
                     if hasattr(step, 'program_path'):
