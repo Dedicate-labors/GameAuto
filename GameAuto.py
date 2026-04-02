@@ -72,7 +72,7 @@ class BaseStep(ABC):
         self.duration_unit = "分钟"  # 持续时间单位
         self.continuous_interval = 1000  # 持续执行间隔(ms)
         self.stop_on_success = True  # 成功执行一次后停止
-        self.stop_on_error = False  # 错误时停止执行
+        self.stop_on_error = False  # 全错时停止执行
     
     @abstractmethod
     def execute(self, app):
@@ -393,10 +393,10 @@ class GameAutoApp:
         self.step_name_var = tk.StringVar()
         ttk.Entry(name_row, textvariable=self.step_name_var).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
         
-        # 错误时停止执行设置
+        # 全错时停止执行设置
         error_stop_row = ttk.Frame(name_frame)
         error_stop_row.pack(fill=tk.X, pady=5)
-        ttk.Label(error_stop_row, text="错误时停止执行：").pack(side=tk.LEFT, padx=5)
+        ttk.Label(error_stop_row, text="全错时停止执行：").pack(side=tk.LEFT, padx=5)
         self.stop_on_error_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(error_stop_row, variable=self.stop_on_error_var).pack(side=tk.LEFT, padx=5)
         
@@ -763,7 +763,7 @@ class GameAutoApp:
             except ValueError:
                 pass
             step.duration_unit = self.duration_unit_var.get()
-            step.stop_on_success = self.stop_on_success_var.get()
+            step.stop_on_success = self.stop_on_success_var.get() if step.execution == "多次执行" else self.stop_on_success_continuous_var.get()
             step.stop_on_error = self.stop_on_error_var.get()
             
             # 保存程序运行设置
@@ -988,9 +988,9 @@ class GameAutoApp:
                         # 添加间隔
                         time.sleep(step.continuous_interval / 1000)
                 
-                # 检查是否需要在错误时停止执行
+                # 检查是否需要在全错时停止执行
                 if step.stop_on_error and not has_success:
-                    self.log(f"步骤 {i + 1}: {step.name} 执行失败，且设置了错误时停止执行，停止整个执行流程", level="错误")
+                    self.log(f"步骤 {i + 1}: {step.name} 执行失败，且设置了全错时停止执行，停止整个执行流程", level="错误")
                     self.status_var.set(f"执行失败：步骤 {i + 1} {step.name} 执行失败")
                     self.running = False
                     break
