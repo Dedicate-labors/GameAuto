@@ -72,7 +72,8 @@ class BaseStep(ABC):
         self.duration_unit = "分钟"  # 持续时间单位
         self.continuous_interval = 1000  # 持续执行间隔(ms)
         self.stop_on_success = True  # 成功执行一次后停止
-        self.stop_on_error = False  # 全错时停止执行
+        self.stop_on_error = False  # 错误时停止执行
+        self.success_delay = 0  # 成功后延迟执行(ms)
     
     @abstractmethod
     def execute(self, app):
@@ -400,6 +401,13 @@ class GameAutoApp:
         self.stop_on_error_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(error_stop_row, variable=self.stop_on_error_var).pack(side=tk.LEFT, padx=5)
         
+        # 成功后延迟执行设置
+        success_delay_row = ttk.Frame(name_frame)
+        success_delay_row.pack(fill=tk.X, pady=5)
+        ttk.Label(success_delay_row, text="成功后延迟执行 (ms)：").pack(side=tk.LEFT, padx=5)
+        self.success_delay_var = tk.StringVar(value="0")
+        ttk.Entry(success_delay_row, textvariable=self.success_delay_var, width=10).pack(side=tk.LEFT, padx=5)
+        
         delay_frame = ttk.LabelFrame(self.scrollable_frame, text="延迟执行")
         delay_frame.pack(fill=tk.X, padx=10, pady=5)
         ttk.Label(delay_frame, text="延迟执行 (ms)：").pack(side=tk.LEFT, padx=5, pady=5)
@@ -574,7 +582,7 @@ class GameAutoApp:
             button_frame.pack(side=tk.RIGHT, padx=5)
             
             # 单独执行按钮
-            execute_btn = ttk.Button(button_frame, text="执行", width=5, command=lambda idx=i: self.execute_single_step_by_index(idx))
+            execute_btn = ttk.Button(button_frame, text="执行", width=5, command=lambda idx=i: self.execute_single_step(idx))
             execute_btn.pack(side=tk.LEFT, padx=2)
             
             # 删除按钮
@@ -633,6 +641,7 @@ class GameAutoApp:
         self.stop_on_success_var.set(step.stop_on_success)
         self.stop_on_success_continuous_var.set(step.stop_on_success)
         self.stop_on_error_var.set(step.stop_on_error)
+        self.success_delay_var.set(str(step.success_delay))
         
         # 加载程序运行设置
         if hasattr(step, 'program_path'):
@@ -759,12 +768,13 @@ class GameAutoApp:
                 step.execution_count = int(self.execution_count_var.get())
                 step.execution_interval = int(self.execution_interval_var.get())
                 step.duration = float(self.duration_var.get())
+                step.duration_unit = self.duration_unit_var.get()
                 step.continuous_interval = int(self.continuous_interval_var.get())
+                step.stop_on_success = self.stop_on_success_var.get() if step.execution == "多次执行" else self.stop_on_success_continuous_var.get()
             except ValueError:
                 pass
-            step.duration_unit = self.duration_unit_var.get()
-            step.stop_on_success = self.stop_on_success_var.get() if step.execution == "多次执行" else self.stop_on_success_continuous_var.get()
             step.stop_on_error = self.stop_on_error_var.get()
+            step.success_delay = int(self.success_delay_var.get())
             
             # 保存程序运行设置
             if hasattr(step, 'program_path'):
@@ -800,13 +810,6 @@ class GameAutoApp:
             self.update_step_list()
             messagebox.showinfo("成功", "步骤配置已保存")
     
-    def delete_step(self):
-        if self.current_step_index is not None and self.current_step_index < len(self.steps):
-            del self.steps[self.current_step_index]
-            self.current_step_index = None
-            self.update_step_list()
-            self.update_step_config_ui()
-    
     def delete_step_by_index(self, index):
         if 0 <= index < len(self.steps):
             del self.steps[index]
@@ -833,78 +836,89 @@ class GameAutoApp:
             self.update_step_list()
             self.select_step(self.current_step_index)
     
-    def execute_single_step(self):
-        if self.current_step_index is None or self.current_step_index >= len(self.steps):
-            messagebox.showwarning("警告", "请先选择一个步骤")
-            return
+    def execute_step(self, step_index):
+        if step_index >= len(self.steps) or step_index < 0 or not self.running:
+            return False
         
-        if self.running:
-            return
+        step = self.steps[step_index]
+        self.status_var.set(f"执行步骤 {step_index + 1}: {step.name}")
         
-        self.running = True
-        self.start_button.config(state=tk.DISABLED)
-        self.stop_button.config(state=tk.NORMAL)
-        self.status_var.set("执行中...")
+        if step.delay > 0:
+            self.log(f"步骤 {step_index + 1}：延迟 {step.delay} ms 执行")
+            time.sleep(step.delay / 1000)
         
-        thread = Thread(target=self.execute_single_step_thread)
-        thread.daemon = True
-        thread.start()
-    
-    def execute_single_step_by_index(self, index):
+        # 记录是否命中执行过
+        has_success = False
+
+        # 处理执行方式
+        if step.execution == "单次执行":
+            has_success = step.execute(self)
+        elif step.execution == "多次执行":
+            count = 0
+            while count < step.execution_count and self.running:
+                success = step.execute(self)
+                if success:
+                    has_success = True
+                
+                # 如果成功且设置了成功后停止，则退出循环
+                if success and step.stop_on_success:
+                    break
+                
+                count += 1
+                
+                # 如果不是最后一次执行，添加间隔
+                if count < step.execution_count:
+                    time.sleep(step.execution_interval / 1000)
+        elif step.execution == "持续执行":
+            start_time = time.time()
+            duration_seconds = step.duration * 60 if step.duration_unit == "分钟" else step.duration
+            
+            while time.time() - start_time < duration_seconds and self.running:
+                success = step.execute(self)
+                if success:
+                    has_success = True
+                
+                # 如果成功且设置了成功后停止，则退出循环
+                if success and step.stop_on_success:
+                    break
+                
+                # 添加间隔
+                time.sleep(step.continuous_interval / 1000)
+
+        return has_success
+
+    def execute_single_step(self, index):
         if 0 <= index < len(self.steps):
             self.current_step_index = index
-            self.execute_single_step()
-    
-    def execute_single_step_thread(self):
-        try:
-            step = self.steps[self.current_step_index]
-            self.status_var.set(f"执行步骤：{step.name}")
-            
-            if step.delay > 0:
-                self.log(f"步骤：延迟 {step.delay} ms 执行")
-                time.sleep(step.delay / 1000)
-            
-            # 处理执行方式
-            if step.execution == "单次执行":
-                step.execute(self)
-            elif step.execution == "多次执行":
-                count = 0
-                while count < step.execution_count and self.running:
-                    success = step.execute(self)
-                    
-                    # 如果成功且设置了成功后停止，则退出循环
-                    if success and step.stop_on_success:
-                        break
-                    
-                    count += 1
-                    
-                    # 如果不是最后一次执行，添加间隔
-                    if count < step.execution_count:
-                        time.sleep(step.execution_interval / 1000)
-            elif step.execution == "持续执行":
-                start_time = time.time()
-                duration_seconds = step.duration * 60 if step.duration_unit == "分钟" else step.duration
-                
-                while time.time() - start_time < duration_seconds and self.running:
-                    success = step.execute(self)
-                    
-                    # 如果成功且设置了成功后停止，则退出循环
-                    if success and step.stop_on_success:
-                        break
-                    
-                    # 添加间隔
-                    time.sleep(step.continuous_interval / 1000)
-            
             if self.running:
-                self.status_var.set("步骤执行完成")
+                return
+            self.running = True
+            self.start_button.config(state=tk.DISABLED)
+            self.stop_button.config(state=tk.NORMAL)
+            self.status_var.set("执行中...")
+
+            thread = Thread(
+                target=self.execute_single_step_thread,
+                args=(index))
+            thread.daemon = True
+            thread.start()
+
+    def execute_single_step_thread(self, step_index):
+        try:
+            has_success = self.execute_step(step_index)
+            self.status_var.set("步骤执行完成")
+            step = self.steps[step_index]
+            # 成功后延迟执行
+            if has_success and step.success_delay > 0:
+                self.log(f"步骤 {step_index + 1}: 成功后延迟 {step.success_delay} ms")
+                time.sleep(step.success_delay / 1000)
         except Exception as e:
             self.log(f"执行错误：{str(e)}", level="错误")
             self.status_var.set(f"执行错误：{str(e)}")
         finally:
-            if self.running:
-                self.start_button.config(state=tk.NORMAL)
-                self.stop_button.config(state=tk.DISABLED)
-                self.running = False
+            self.start_button.config(state=tk.NORMAL)
+            self.stop_button.config(state=tk.DISABLED)
+            self.running = False
     
     def start_execution(self):
         if not self.steps:
@@ -913,99 +927,51 @@ class GameAutoApp:
         
         if self.running:
             return
-        
         self.running = True
         self.start_button.config(state=tk.DISABLED)
         self.stop_button.config(state=tk.NORMAL)
         self.status_var.set("执行中...")
         
-        thread = Thread(target=self.execute_steps)
+        thread = Thread(target=self.execute_steps_thread)
         thread.daemon = True
         thread.start()
     
+    def execute_steps_thread(self):
+        try:
+            for i, step in enumerate(self.steps):
+                # 停止所有步骤执行
+                if not self.running:
+                    break
+                if not step.enabled:
+                    self.log(f"步骤 {i + 1}: {step.name} (已停用，跳过)")
+                    continue
+
+                has_success = self.execute_step(i)
+                # 成功后延迟执行
+                if has_success and step.success_delay > 0:
+                    self.log(f"步骤 {i + 1}: 成功后延迟 {step.success_delay} ms")
+                    time.sleep(step.success_delay / 1000)
+                # 检查是否需要在全错时停止所有步骤执行
+                if not has_success and step.stop_on_error:
+                    self.log(f"步骤 {i + 1}: {step.name} 执行失败，且设置了全错时停止执行，停止整个执行流程", level="错误")
+                    self.status_var.set(f"执行失败：步骤 {i + 1} {step.name} 执行失败")
+                    self.running = False
+                    break
+            self.status_var.set("所有步骤执行完成")
+        except Exception as e:
+            self.log(f"执行错误：{str(e)}", level="错误")
+            self.status_var.set(f"执行错误：{str(e)}")
+        finally:
+            self.start_button.config(state=tk.NORMAL)
+            self.stop_button.config(state=tk.DISABLED)
+            self.running = False
+
     def stop_execution(self):
         self.running = False
         self.start_button.config(state=tk.NORMAL)
         self.stop_button.config(state=tk.DISABLED)
         self.status_var.set("已停止")
-    
-    def execute_steps(self):
-        try:
-            enabled_steps = [step for step in self.steps if step.enabled]
-            total_enabled = len(enabled_steps)
-            executed_count = 0
-            
-            for i, step in enumerate(self.steps):
-                if not self.running:
-                    break
-                
-                if not step.enabled:
-                    self.log(f"步骤 {i + 1}: {step.name} (已停用，跳过)")
-                    continue
-                
-                executed_count += 1
-                self.status_var.set(f"执行步骤 {executed_count}/{total_enabled}: {step.name}")
-                
-                if step.delay > 0:
-                    self.log(f"步骤 {i + 1}: 延迟 {step.delay} ms 执行")
-                    time.sleep(step.delay / 1000)
-                
-                # 记录执行结果
-                has_success = False
-                
-                # 处理执行方式
-                if step.execution == "单次执行":
-                    has_success = step.execute(self)
-                elif step.execution == "多次执行":
-                    count = 0
-                    while count < step.execution_count and self.running:
-                        success = step.execute(self)
-                        if success:
-                            has_success = True
-                        
-                        # 如果成功且设置了成功后停止，则退出循环
-                        if success and step.stop_on_success:
-                            break
-                        
-                        count += 1
-                        
-                        # 如果不是最后一次执行，添加间隔
-                        if count < step.execution_count:
-                            time.sleep(step.execution_interval / 1000)
-                elif step.execution == "持续执行":
-                    start_time = time.time()
-                    duration_seconds = step.duration * 60 if step.duration_unit == "分钟" else step.duration
-                    
-                    while time.time() - start_time < duration_seconds and self.running:
-                        success = step.execute(self)
-                        if success:
-                            has_success = True
-                        
-                        # 如果成功且设置了成功后停止，则退出循环
-                        if success and step.stop_on_success:
-                            break
-                        
-                        # 添加间隔
-                        time.sleep(step.continuous_interval / 1000)
-                
-                # 检查是否需要在全错时停止执行
-                if step.stop_on_error and not has_success:
-                    self.log(f"步骤 {i + 1}: {step.name} 执行失败，且设置了全错时停止执行，停止整个执行流程", level="错误")
-                    self.status_var.set(f"执行失败：步骤 {i + 1} {step.name} 执行失败")
-                    self.running = False
-                    break
-            
-            if self.running:
-                self.status_var.set("所有步骤执行完成")
-        except Exception as e:
-            self.log(f"执行错误：{str(e)}", level="错误")
-            self.status_var.set(f"执行错误：{str(e)}")
-        finally:
-            if self.running:
-                self.start_button.config(state=tk.NORMAL)
-                self.stop_button.config(state=tk.DISABLED)
-                self.running = False
-    
+     
     def browse_program(self):
         file_path = filedialog.askopenfilename(filetypes=[("可执行文件", "*.exe"), ("所有文件", "*.*")])
         if file_path:
@@ -1108,8 +1074,6 @@ class GameAutoApp:
                         step = KeyInputStep(step_dict["name"])
                     elif step_type == "image_recognition":
                         step = ImageRecognitionStep(step_dict["name"])
-                    # elif step_type == "image_click_text":
-                    #     step = ImageClickTextStep(step_dict["name"])
                     else:
                         continue
                     
