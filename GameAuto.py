@@ -899,7 +899,7 @@ class GameAutoApp:
 
             thread = Thread(
                 target=self.execute_single_step_thread,
-                args=(index))
+                args=(index,))
             thread.daemon = True
             thread.start()
 
