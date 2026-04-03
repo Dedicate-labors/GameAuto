@@ -759,8 +759,10 @@ class GameAutoApp:
             step.name = self.step_name_var.get()
             try:
                 step.delay = int(self.delay_var.get())
+                step.success_delay = int(self.success_delay_var.get())
             except ValueError:
                 step.delay = 0
+                step.success_delay = 0
             
             # 保存执行设置
             step.execution = self.execution_var.get()
@@ -768,13 +770,12 @@ class GameAutoApp:
                 step.execution_count = int(self.execution_count_var.get())
                 step.execution_interval = int(self.execution_interval_var.get())
                 step.duration = float(self.duration_var.get())
-                step.duration_unit = self.duration_unit_var.get()
                 step.continuous_interval = int(self.continuous_interval_var.get())
-                step.stop_on_success = self.stop_on_success_var.get() if step.execution == "多次执行" else self.stop_on_success_continuous_var.get()
             except ValueError:
                 pass
+            step.duration_unit = self.duration_unit_var.get()
             step.stop_on_error = self.stop_on_error_var.get()
-            step.success_delay = int(self.success_delay_var.get())
+            step.stop_on_success = self.stop_on_success_var.get() if step.execution == "多次执行" else self.stop_on_success_continuous_var.get()
             
             # 保存程序运行设置
             if hasattr(step, 'program_path'):
@@ -1013,7 +1014,8 @@ class GameAutoApp:
                         "duration_unit": step.duration_unit,
                         "continuous_interval": step.continuous_interval,
                         "stop_on_success": step.stop_on_success,
-                        "stop_on_error": step.stop_on_error
+                        "stop_on_error": step.stop_on_error,
+                        "success_delay": step.success_delay
                     }
                     
                     # 添加步骤特定的属性
@@ -1088,6 +1090,7 @@ class GameAutoApp:
                     step.continuous_interval = step_dict.get("continuous_interval", 1000)
                     step.stop_on_success = step_dict.get("stop_on_success", True)
                     step.stop_on_error = step_dict.get("stop_on_error", False)
+                    step.success_delay = step_dict.get("success_delay", 0)
                     
                     # 设置步骤特定的属性
                     if hasattr(step, 'program_path'):
